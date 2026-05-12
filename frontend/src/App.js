@@ -1,45 +1,49 @@
 import { useEffect, useState } from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Sidebar from "./components/Sidebar";
+import Dashboard from "./pages/Dashboard";
+import Instances from "./pages/Instances";
+import EC2Card from "./components/EC2Card";
+import "./App.css";
 
 function App() {
-
   const [instances, setInstances] = useState([]);
 
   useEffect(() => {
-
     fetch("http://127.0.0.1:5000/")
       .then((response) => response.json())
       .then((data) => {
         setInstances(data);
       });
-
   }, []);
 
   return (
 
-    <div>
+    <BrowserRouter>
 
-      <h1>CloudCostIQ</h1>
+      <div style={{ display: "flex" }}>
 
-      {instances.map((instance) => (
+        <Sidebar />
 
-        <div key={instance.InstanceId}>
+        <div style={{ padding: "20px", width: "100%" }}>
+          <Routes>
 
-          <h2>{instance.Name}</h2>
+            <Route
+              path="/"
+              element={<Dashboard />}
+            />
 
-          <p>{instance.InstanceType}</p>
+            <Route
+              path="/instances"
+              element={<Instances />}
+            />
 
-          <p>{instance.State}</p>
-
-          <p>
-            SSH Open:
-            {instance.SSHOpenToPublic ? " Yes" : " No"}
-          </p>
-
+          </Routes>
         </div>
 
-      ))}
+      </div>
 
-    </div>
+    </BrowserRouter>
   );
 }
 
