@@ -42,12 +42,12 @@ def is_ssh_open(instance):
     security_groups = instance.get("SecurityGroups", [])
 
     for sg in security_groups:
-
         sg_id = sg["GroupId"]
 
         response = ec2.describe_security_groups(
             GroupIds=[sg_id]
         )
+        
     for sg in response["SecurityGroups"]:
         for permission in sg.get("IpPermissions", []):
             if permission.get("FromPort") == 22 and permission.get("ToPort") == 22:
