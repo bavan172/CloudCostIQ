@@ -1,14 +1,10 @@
 from flask import Flask, jsonify
+from routes.ec2_routes import ec2_bp
 from flask_cors import CORS
-from services.ec2_service import get_instances
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app)
+app.register_blueprint(ec2_bp, url_prefix="/api/ec2")
 
-@app.route("/")
-def home():
-    instances = get_instances()
-    return jsonify(instances)
-    
 if __name__ == "__main__":
     app.run(debug=True)
