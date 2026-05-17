@@ -1,17 +1,5 @@
 from flask import Blueprint, jsonify, request
-from services.ec2_service import (
-    get_instance_summary,
-    get_instances,
-    start_instance,
-    stop_instance,
-    reboot_instance,
-    delete_instance,
-    get_ec2_cpu_24h,
-    get_ec2_cpu_7d,
-    get_ec2_instance_cost,
-    get_idle_ec2_instances,
-    get_stopped_ec2_with_cost
-)
+from services.ec2_service import *
 
 ec2_bp = Blueprint("ec2", __name__)
 
@@ -111,5 +99,23 @@ def ec2_cost(instance_id):
     try:
         cost = get_ec2_instance_cost(instance_id)
         return jsonify(cost)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+    
+@ec2_bp.route("/instances/volumes", methods=["GET"])
+def ec2_unattached_volumes():
+    try:
+        volumes = get_unattached_ebs_volumes()
+        return jsonify(volumes)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+    
+@ec2_bp.route("/instances/eips", methods=["GET"])
+def ec2_unused_eips():
+    try:
+        eips = get_unused_elastic_ips()
+        return jsonify(eips)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

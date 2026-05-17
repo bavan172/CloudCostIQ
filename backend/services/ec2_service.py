@@ -279,3 +279,60 @@ def get_ec2_uptime(launch_time):
     current_time = datetime.now(UTC)
     uptime = current_time - launch_time
     return uptime.days
+
+# Get unattached EBS volumes
+def get_unattached_ebs_volumes():
+    response = ec2.describe_volumes(
+        Filters=[
+            {
+                "Name": "status",
+                "Values": ["available"]  # available = not attached to any instance
+            }
+        ]
+    )
+
+    volumes = []
+    for volume in response["Volumes"]:
+        
+        name = volume.get("VolumeId")
+        for tag in volume.get("Tags", []):
+            if tag["Key"] == "Name":
+                name = tag["Value"]
+
+        estimated_cost = round(volume.get("Size") * 0.10, 2)
+
+        volumes.append({
+            "VolumeId": volume.get("VolumeId"),
+            "Name": name,
+            "SizeGB": volume.get("Size"),
+            "VolumeType": volume.get("VolumeType"),
+            "AvailabilityZone": volume.get("AvailabilityZone"),
+            "CreateTime": str(volume.get("CreateTime")),
+            "Encrypted": volume.get("Encrypted"),
+            "EstimatedMonthlyCost": f"${estimated_cost}"
+        })
+
+    return volumes
+
+
+def get_unused_elastic_ips():
+    response = ec2.describe_addresses()
+    
+    unused = []
+    for address in response["Addresses"]:
+
+        # If no InstanceId and no NetworkInterfaceId it's unused
+        is_associated = (
+            address.get("InstanceId") or 
+            address.get("NetworkInterfaceId")
+        )
+        
+        if not is_associated:
+            unused.append({
+                "AllocationId": address.get("AllocationId"),
+                "PublicIp": address.get("PublicIp"),
+                "Domain": address.get("Domain"),  # vpc or standard
+                "CreateTime": str(address.get("CreateTime"))
+            })
+    
+    return unused
