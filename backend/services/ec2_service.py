@@ -73,30 +73,12 @@ def is_ssh_open(instance):
     return False
 
 
-# print(json.dumps(get_instances(), indent=4, default=str))
-
-def start_instance(instance_id):
-    try:
-        response = ec2.start_instances(InstanceIds=[instance_id])
-        return response
-    except Exception as e:
-        print(f"Error starting instance {instance_id}: {e}")
-        return None
-
 def stop_instance(instance_id):
     try:
         response = ec2.stop_instances(InstanceIds=[instance_id])
         return response
     except Exception as e:
         print(f"Error stopping instance {instance_id}: {e}")
-        return None
-
-def reboot_instance(instance_id):
-    try:
-        response = ec2.reboot_instances(InstanceIds=[instance_id])
-        return response
-    except Exception as e:
-        print(f"Error rebooting instance {instance_id}: {e}")
         return None
 
 def delete_instance(instance_id):
@@ -159,40 +141,6 @@ def get_ec2_cpu_7d(instance_id):
     )
 
     return response["Datapoints"]
-
-
-# Get monthly EC2 cost for one instance
-def get_ec2_instance_cost(instance_id):
-    cost_explorer = boto3.client("ce")
-
-    end_date = datetime.today().date()
-    start_date = end_date.replace(day=1)  # Start of current month, not just 30 days
-
-    response = cost_explorer.get_cost_and_usage(
-        TimePeriod={
-            "Start": str(start_date),
-            "End": str(end_date)
-        },
-        Granularity="MONTHLY",
-        Metrics=["UnblendedCost"],
-        Filter={
-            "And": [
-                {
-                    "Dimensions": {
-                        "Key": "SERVICE",
-                        "Values": ["Amazon Elastic Compute Cloud - Compute"]
-                    }
-                },
-                {
-                    "Tags": {
-                        "Key": "aws:ec2:instance-id",  
-                        "Values": [instance_id]
-                    }
-                }
-            ]
-        }
-    )
-    return response
 
 
 # Get idle EC2 instances
@@ -280,6 +228,35 @@ def get_ec2_uptime(launch_time):
     uptime = current_time - launch_time
     return uptime.days
 
+def get_untagged_ec2_instances():
+    instances = get_instances()
+    untagged = []
+
+    for instance in instances:
+        try:
+            # get_instances() already parses tags
+            # if Name == InstanceId it means no Name tag was found
+            # but we want to check ALL tags not just Name
+            response = ec2.describe_instances(
+                InstanceIds=[instance["InstanceId"]]
+            )
+            raw_tags = response["Reservations"][0]["Instances"][0].get("Tags", [])
+
+            if not raw_tags:
+                untagged.append({
+                    "InstanceId": instance["InstanceId"],
+                    "InstanceType": instance.get("InstanceType"),
+                    "State": instance.get("State"),
+                    "AvailabilityZone": instance.get("AvailabilityZone"),
+                    "Reason": "No tags found, please tag this resource to improve organization and management",
+                })
+        except Exception as e:
+            print(f"Error checking tags for {instance.get('InstanceId')}: {e}")
+            continue
+
+    return untagged
+
+
 # Get unattached EBS volumes
 def get_unattached_ebs_volumes():
     response = ec2.describe_volumes(
@@ -336,3 +313,135 @@ def get_unused_elastic_ips():
             })
     
     return unused
+
+
+#----Snapshots
+
+import boto3
+from datetime import datetime, timedelta, UTC
+
+ec2 = boto3.client("ec2")
+
+
+def get_all_snapshots():
+    response = ec2.describe_snapshots(OwnerIds=["self"])
+    snapshots = []
+
+    for snapshot in response.get("Snapshots", []):
+        try:
+            name = snapshot.get("SnapshotId")
+            for tag in snapshot.get("Tags", []):
+                if tag["Key"] == "Name":
+                    name = tag["Value"]
+
+            start_time = snapshot.get("StartTime")
+            age_days = (datetime.now(UTC) - start_time).days if start_time else 0
+
+            snapshots.append({
+                "SnapshotId": snapshot.get("SnapshotId"),
+                "Name": name,
+                "VolumeId": snapshot.get("VolumeId"),
+                "VolumeSize": snapshot.get("VolumeSize"),
+                "State": snapshot.get("State"),
+                "Encrypted": snapshot.get("Encrypted"),
+                "StartTime": str(start_time),
+                "AgeDays": age_days,
+                "Tags": snapshot.get("Tags", [])
+            })
+        except Exception as e:
+            print(f"Error processing snapshot {snapshot.get('SnapshotId')}: {e}")
+            continue
+
+    return snapshots
+
+
+def get_old_snapshots():
+    snapshots = get_all_snapshots()
+    old = []
+
+    # Get all existing volume IDs for comparison
+    volumes_response = ec2.describe_volumes()
+    existing_volume_ids = {
+        v["VolumeId"] for v in volumes_response.get("Volumes", [])
+    }
+
+    for snapshot in snapshots:
+        try:
+            age_days = snapshot.get("AgeDays", 0)
+            volume_id = snapshot.get("VolumeId")
+
+            if age_days < 90:
+                continue
+
+            # Check if source volume still exists
+            source_volume_deleted = volume_id not in existing_volume_ids
+
+
+            old.append({
+                "SnapshotId": snapshot.get("SnapshotId"),
+                "Name": snapshot.get("Name"),
+                "VolumeId": volume_id,
+                "VolumeSize": snapshot.get("VolumeSize"),
+                "AgeDays": age_days,
+                "StartTime": snapshot.get("StartTime"),
+                "SourceVolumeDeleted": source_volume_deleted,
+                "Reason": f"Snapshot is {age_days} days old" + 
+                          (" and source volume no longer exists" if source_volume_deleted else "")
+            })
+        except Exception as e:
+            print(f"Error checking old snapshot {snapshot.get('SnapshotId')}: {e}")
+            continue
+
+    return old
+
+
+def get_unencrypted_snapshots():
+    snapshots = get_all_snapshots()
+    unencrypted = []
+
+    for snapshot in snapshots:
+        try:
+            if not snapshot.get("Encrypted", False):
+                unencrypted.append({
+                    "SnapshotId": snapshot.get("SnapshotId"),
+                    "Name": snapshot.get("Name"),
+                    "VolumeId": snapshot.get("VolumeId"),
+                    "VolumeSize": snapshot.get("VolumeSize"),
+                    "AgeDays": snapshot.get("AgeDays", 0),
+                    "Reason": "Snapshot is not encrypted, which can be a security risk if it contains sensitive data. Consider encrypting this snapshot or deleting it if it's no longer needed."
+                })
+        except Exception as e:
+            print(f"Error checking encryption for {snapshot.get('SnapshotId')}: {e}")
+            continue
+
+    return unencrypted
+
+
+def get_untagged_snapshots():
+    snapshots = get_all_snapshots()
+    untagged = []
+
+    for snapshot in snapshots:
+        try:
+            if not snapshot.get("Tags"):
+                untagged.append({
+                    "SnapshotId": snapshot.get("SnapshotId"),
+                    "Name": snapshot.get("Name"),
+                    "VolumeId": snapshot.get("VolumeId"),
+                    "VolumeSize": snapshot.get("VolumeSize"),
+                    "AgeDays": snapshot.get("AgeDays", 0),
+                    "Reason": "No tags found, please tag this resource to improve organization and management. Untagged resources can lead to confusion and difficulty in tracking costs."
+                })
+        except Exception as e:
+            print(f"Error checking tags for {snapshot.get('SnapshotId')}: {e}")
+            continue
+
+    return untagged
+
+
+def get_wasteful_snapshots():
+    return {
+        "old_snapshots": len(get_old_snapshots()),
+        "unencrypted_snapshots": len(get_unencrypted_snapshots()),
+        "untagged_snapshots": len(get_untagged_snapshots())
+    }
